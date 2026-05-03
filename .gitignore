@@ -1,6 +1,38 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
 .venv/
+venv/
+env/
+
+# OS/editor files
+.DS_Store
+.idea/
+.vscode/
+
+# Data and generated training artifacts
+data/*
+!data/README.md
 outputs/
+checkpoints/
+models/
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.safetensors
+
+# Logs and temporary files
 *.log
-data/
+tmp/
+temp/
+
+# Notebook checkpoints
+.ipynb_checkpoints/

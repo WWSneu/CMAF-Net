@@ -426,6 +426,85 @@ def run_ablation_cv_experiment(
     return results_df
 
 
+def run_strict_cv_experiment(
+    df_all,
+    meta_cols,
+    city_col,
+    tokenizer,
+    device,
+    model_name="hfl/chinese-roberta-wwm-ext",
+    n_splits=10,
+    random_state=42,
+):
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+
+    fold_rows = []
+    oof_probs = np.zeros(len(df_all), dtype=np.float32)
+    oof_labels = df_all["label"].values.astype(int)
+
+    for fold, (train_idx, val_idx) in enumerate(
+        skf.split(df_all["text"].astype(str).values, df_all["label"].values),
+        start=1,
+    ):
+        print(f"\n================ Strict Fold {fold}/{n_splits} ================\n")
+
+        raw_train_df = df_all.iloc[train_idx].reset_index(drop=True)
+        val_df = df_all.iloc[val_idx].reset_index(drop=True)
+
+        train_df = apply_nearmiss_by_city(
+            raw_train_df,
+            feature_cols=meta_cols,
+            city_col=city_col,
+            label_col="label",
+            random_state=random_state + fold,
+        )
+
+        print("训练集平衡后分布:")
+        print(train_df["label"].value_counts())
+        print("验证集原始分布:")
+        print(val_df["label"].value_counts())
+
+        fold_metrics, artifacts = run_single_fold(
+            train_df=train_df,
+            val_df=val_df,
+            tokenizer=tokenizer,
+            meta_cols=meta_cols,
+            device=device,
+            model_name=model_name,
+            hidden_dim=256,
+            num_claims=4,
+            dropout=0.1,
+            diversity_lambda=0.005,
+            max_length=160,
+            random_state=random_state + fold,
+        )
+
+        print("Fold metrics:", fold_metrics)
+
+        oof_probs[val_idx] = artifacts["probs_pos"]
+
+        row = {"fold": fold}
+        row.update(fold_metrics)
+        fold_rows.append(row)
+
+    results_df = pd.DataFrame(fold_rows)
+
+    print("\n========== Strict 10-fold CV 结果 ==========")
+    print(results_df)
+
+    print("\n========== Mean ± Std ==========")
+    for metric in ["accuracy", "precision", "recall", "f1", "auc", "ap"]:
+        mean_val = results_df[metric].mean()
+        std_val = results_df[metric].std()
+        print(f"{metric}: {mean_val:.4f} ± {std_val:.4f}")
+
+    overall_metrics = metrics_from_probs(oof_labels, oof_probs, threshold=0.5)
+    print("\n========== Strict OOF Overall ==========")
+    print(overall_metrics)
+
+    return results_df, oof_labels, oof_probs
+
+
 def run_paper_aligned_cv_experiment(
     df_all,
     meta_cols,

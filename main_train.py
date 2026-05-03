@@ -7,9 +7,13 @@ from sklearn.metrics import average_precision_score, precision_recall_curve, roc
 from transformers import AutoTokenizer
 
 from src.data_prep import build_feature_dataframe
-from src.experiment import run_ablation_cv_experiment, run_paper_aligned_cv_experiment
+from src.experiment import (
+    run_ablation_cv_experiment,
+    run_paper_aligned_cv_experiment,
+    run_strict_cv_experiment,
+)
 from src.meta_sampling import apply_nearmiss_by_city
-from src.training_utils import search_best_threshold
+from src.training_utils import search_best_threshold, set_global_seed
 
 
 def configure_env(cuda_visible_devices="6"):
@@ -31,7 +35,7 @@ def get_device():
     return device
 
 
-def plot_oof_curves(oof_labels, oof_probs, output_dir):
+def plot_oof_curves(oof_labels, oof_probs, output_dir, file_prefix="oof"):
     fpr, tpr, _ = roc_curve(oof_labels, oof_probs)
     precision_curve, recall_curve, _ = precision_recall_curve(oof_labels, oof_probs)
 
@@ -44,7 +48,7 @@ def plot_oof_curves(oof_labels, oof_probs, output_dir):
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "oof_roc.png"), dpi=200)
+    plt.savefig(os.path.join(output_dir, f"{file_prefix}_roc.png"), dpi=200)
     plt.close()
 
     plt.figure(figsize=(6, 5))
@@ -59,7 +63,7 @@ def plot_oof_curves(oof_labels, oof_probs, output_dir):
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "oof_pr.png"), dpi=200)
+    plt.savefig(os.path.join(output_dir, f"{file_prefix}_pr.png"), dpi=200)
     plt.close()
 
 
@@ -75,10 +79,16 @@ def main():
     parser.add_argument("--ablation_quick", action="store_true", help="只跑 4 组核心消融")
     parser.add_argument("--ablation_only", action="store_true", help="只跑消融，不跑主实验")
     parser.add_argument("--ablation_n_splits", type=int, default=None)
+    parser.add_argument(
+        "--strict_cv",
+        action="store_true",
+        help="每个fold内部只对训练集做NearMiss，验证集保持原始分布",
+    )
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
     configure_env(cuda_visible_devices=args.cuda_visible_devices)
+    set_global_seed(args.random_state)
 
     df_all, meta_cols, city_col = build_feature_dataframe(args.csv_path)
 
@@ -87,26 +97,55 @@ def main():
 
     balanced_df = None
     if not args.ablation_only:
-        balanced_df, cv_results_df, oof_labels, oof_probs = run_paper_aligned_cv_experiment(
-            df_all=df_all,
-            meta_cols=meta_cols,
-            city_col=city_col,
-            tokenizer=tokenizer,
-            device=device,
-            model_name=args.model_name,
-            n_splits=args.n_splits,
-            random_state=args.random_state,
-        )
+        if args.strict_cv:
+            strict_results_df, strict_oof_labels, strict_oof_probs = run_strict_cv_experiment(
+                df_all=df_all,
+                meta_cols=meta_cols,
+                city_col=city_col,
+                tokenizer=tokenizer,
+                device=device,
+                model_name=args.model_name,
+                n_splits=args.n_splits,
+                random_state=args.random_state,
+            )
 
-        best_t, best_metrics = search_best_threshold(oof_labels, oof_probs)
-        print("Best threshold:", round(best_t, 4))
-        print(best_metrics)
+            best_t, best_metrics = search_best_threshold(strict_oof_labels, strict_oof_probs)
+            print("Strict CV best threshold:", round(best_t, 4))
+            print(best_metrics)
 
-        cv_results_df.to_csv(os.path.join(args.output_dir, "cv_results.csv"), index=False)
-        balanced_df.to_csv(os.path.join(args.output_dir, "balanced_data.csv"), index=False)
-        plot_oof_curves(oof_labels, oof_probs, args.output_dir)
+            strict_results_df.to_csv(
+                os.path.join(args.output_dir, "strict_cv_results.csv"),
+                index=False,
+            )
+            plot_oof_curves(
+                strict_oof_labels,
+                strict_oof_probs,
+                args.output_dir,
+                file_prefix="strict_oof",
+            )
+        else:
+            balanced_df, cv_results_df, oof_labels, oof_probs = run_paper_aligned_cv_experiment(
+                df_all=df_all,
+                meta_cols=meta_cols,
+                city_col=city_col,
+                tokenizer=tokenizer,
+                device=device,
+                model_name=args.model_name,
+                n_splits=args.n_splits,
+                random_state=args.random_state,
+            )
+
+            best_t, best_metrics = search_best_threshold(oof_labels, oof_probs)
+            print("Best threshold:", round(best_t, 4))
+            print(best_metrics)
+
+            cv_results_df.to_csv(os.path.join(args.output_dir, "cv_results.csv"), index=False)
+            balanced_df.to_csv(os.path.join(args.output_dir, "balanced_data.csv"), index=False)
+            plot_oof_curves(oof_labels, oof_probs, args.output_dir, file_prefix="oof")
 
     if args.run_ablation or args.ablation_only:
+        if args.strict_cv:
+            print("⚠️ 当前消融实验仍按 paper-aligned 协议运行（先全局 NearMiss，再CV）。")
         if balanced_df is None:
             balanced_df = apply_nearmiss_by_city(
                 df_all,
