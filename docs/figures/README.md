@@ -5,3 +5,4 @@ This directory stores lightweight figures used by the README and manuscript/repo
 | File | Description |
 |---|---|
 | `architecture.png` | CMAF-Net architecture overview. |
+| `architecture.pdf` | PDF version of the architecture figure for publication/report use. |
