@@ -20,6 +20,7 @@ env/
 # Data and generated training artifacts
 data/*
 !data/README.md
+!data/merged_data.csv
 outputs/
 checkpoints/
 models/
@@ -31,6 +32,18 @@ models/
 
 # Logs and temporary files
 *.log
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.lot
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
 tmp/
 temp/
 
